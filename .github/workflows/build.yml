@@ -1,4 +1,4 @@
-name: sql tracer
+name: Coverage覆盖率
 
 on:
   workflow_dispatch
