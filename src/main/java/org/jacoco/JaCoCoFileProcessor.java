@@ -13,12 +13,14 @@ import org.jacoco.report.DirectorySourceFileLocator;
 import org.jacoco.report.FileMultiReportOutput;
 import org.jacoco.report.IReportVisitor;
 import org.jacoco.report.html.HTMLFormatter;
+import org.jacoco.util.PluginCacheManager;
 
 import javax.swing.*;
 import java.io.*;
 import java.net.Socket;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.Objects;
 
 /**
  * JaCoCo文件处理器（终极兼容版）
@@ -91,8 +93,12 @@ public class JaCoCoFileProcessor {
 
         String dataDirPath = getJacocoDataDirPath();
         String htmlOutputDirPath = Paths.get(dataDirPath).resolve(htmlDirName).toString();
-        String classesDirPath = Paths.get(project.getBasePath()).resolve("target/classes").toString();
-        String srcDirPath = Paths.get(project.getBasePath()).resolve("src/main/java").toString();
+        PathResult ideaCacheDir = PluginCacheManager.getProjectIdeaCacheDir(project);
+        if (Objects.isNull(ideaCacheDir)) {
+            return "无法获取项目classes路径";
+        }
+        String classesDirPath = ideaCacheDir.targetPath;
+        String srcDirPath = ideaCacheDir.srcPath;
 
         File classesDir = new File(classesDirPath); // 替换为实际路径
         if (!classesDir.exists()) {
@@ -188,7 +194,7 @@ public class JaCoCoFileProcessor {
         }
 
         try {
-            String url = htmlDataDir.toURI().toString();
+            String url = htmlFile.toURI().toString();
             BrowserUtil.browse(url);
         } catch (Exception ex) {
             ex.printStackTrace();

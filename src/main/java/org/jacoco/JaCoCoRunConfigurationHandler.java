@@ -8,9 +8,18 @@ import com.intellij.execution.configurations.RunConfiguration;
 import com.intellij.execution.configurations.RunProfile;
 import com.intellij.execution.runners.JavaProgramPatcher;
 import com.intellij.internal.statistic.eventLog.util.StringUtil;
+import com.intellij.openapi.module.Module;
+import com.intellij.openapi.module.ModuleUtil;
 import com.intellij.openapi.project.Project;
+import com.intellij.openapi.roots.ModuleRootManager;
 import com.intellij.openapi.util.io.FileUtil;
+import com.intellij.openapi.vfs.VfsUtilCore;
+import com.intellij.openapi.vfs.VirtualFile;
+import com.intellij.psi.JavaPsiFacade;
 import com.intellij.psi.PsiClass;
+import com.intellij.psi.search.GlobalSearchScope;
+import com.intellij.psi.util.PsiUtilCore;
+import org.jacoco.util.PluginCacheManager;
 import org.jacoco.util.PluginUtil;
 
 import java.io.File;
@@ -39,6 +48,7 @@ public class JaCoCoRunConfigurationHandler extends JavaProgramPatcher {
 
         RunConfiguration runConfiguration = (RunConfiguration) runProfile;
 
+
         Project project = ((RunConfiguration) runProfile).getProject();
         if (runConfiguration instanceof ApplicationConfiguration) {
             JaCoCoPortSettings settings = JaCoCoPortSettings.getInstance(project);
@@ -47,9 +57,9 @@ public class JaCoCoRunConfigurationHandler extends JavaProgramPatcher {
                 return;
             }
 
-
             // 判断文件中是否有指定内容
             PsiClass mainClass = ((ApplicationConfiguration) runConfiguration).getMainClass();
+
             if (Objects.nonNull(mainClass)) {
                 if (mainClass.hasAnnotation("org.springframework.boot.autoconfigure.SpringBootApplication")
                         || mainClass.hasAnnotation("org.springframework.cloud.client.SpringCloudApplication")) {
@@ -93,6 +103,8 @@ public class JaCoCoRunConfigurationHandler extends JavaProgramPatcher {
                             packagePath,
                             execFilePath
                     );
+
+                    resolvePathsByMainClass(project, mainClass);
 
                     // 9. 注入JVM参数（避免重复注入）
                     if (!javaParameters.getVMParametersList().hasParameter(jacocoAgentParams)) {
@@ -207,62 +219,6 @@ public class JaCoCoRunConfigurationHandler extends JavaProgramPatcher {
     }
 
     /**
-     * 判断是否为SpringBoot项目
-     */
-    private boolean isSpringBootProject(Project project) {
-        File pomFile = new File(project.getBasePath() + "/pom.xml");
-        File buildGradleFile = new File(project.getBasePath() + "/build.gradle");
-
-        if (pomFile.exists()) {
-            try {
-                return FileUtil.loadFile(pomFile).contains("spring-boot-starter");
-            } catch (Exception e) {
-                return false;
-            }
-        }
-        if (buildGradleFile.exists()) {
-            try {
-                return FileUtil.loadFile(buildGradleFile).contains("spring-boot-starter");
-            } catch (Exception e) {
-                return false;
-            }
-        }
-        return false;
-    }
-
-    /**
-     * 查找JaCoCo Agent Jar包
-     */
-    private String findJaCoCoAgentJar() {
-        try {
-            ClassLoader classLoader = getClass().getClassLoader();
-            URL agentUrl = classLoader.getResource(Constant.JACOCO_AGENT_JAR_NAME);
-
-            if (agentUrl != null) {
-                String path = agentUrl.getPath();
-                path = URLDecoder.decode(path, "UTF-8");
-
-                if (path.startsWith("jar:file:")) {
-                    path = path.substring(9, path.indexOf("!"));
-                }
-
-                return path;
-            }
-
-            String ideaHome = System.getProperty("idea.home.path");
-            if (ideaHome != null) {
-                File jacocoAgentFile = new File(ideaHome + "/plugins/jacoco/lib/" + Constant.JACOCO_AGENT_JAR_NAME);
-                if (jacocoAgentFile.exists()) {
-                    return jacocoAgentFile.getAbsolutePath();
-                }
-            }
-        } catch (Exception e) {
-            // 忽略异常
-        }
-        return null;
-    }
-
-    /**
      * 获取包路径
      *
      * @param javaParameters
@@ -280,6 +236,41 @@ public class JaCoCoRunConfigurationHandler extends JavaProgramPatcher {
             return mainClass.substring(0, lastDot) + ".*";
         }
         return "*"; // fallback
+    }
+
+    /**
+     * 通过 mainClass 名称获取其所在模块的 src 路径和 Maven target 路径
+     *
+     * @param project  当前项目
+     * @param psiClass 完整类名，如 "com.example.App"
+     * @return 包含 src 和 target 路径的结果对象
+     */
+    public static void resolvePathsByMainClass(Project project, PsiClass psiClass) {
+        // 2. 获取对应的 VirtualFile (.java 文件)
+        VirtualFile sourceFile = PsiUtilCore.getVirtualFile(psiClass);
+        if (sourceFile == null) return;
+
+        // 3. 获取 Module
+        Module module = ModuleUtil.findModuleForFile(sourceFile, project);
+        if (module == null) return;
+
+        // 4. 获取 src 目录：找到包含该 sourceFile 的 source root
+        String srcPath = findSourceRootForFile(module, sourceFile);
+        if (srcPath == null) return;
+
+        // 5. 获取 Maven target 目录
+        String targetPath = srcPath.replace("src/main/java","target/classes");
+
+        PluginCacheManager.saveCache(project, new PathResult(srcPath, targetPath));
+    }
+
+    private static String findSourceRootForFile(Module module, VirtualFile file) {
+        for (VirtualFile root : ModuleRootManager.getInstance(module).getSourceRoots()) {
+            if (VfsUtilCore.isAncestor(root, file, false)) {
+                return root.getPath();
+            }
+        }
+        return null;
     }
 
 }
